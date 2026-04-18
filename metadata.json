@@ -1,0 +1,6 @@
+{
+  "name": "VibeStream",
+  "description": "A high-fidelity music streaming experience inspired by Spotify, featuring immersive layouts, real-time playback simulation, and discovery-focused navigation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

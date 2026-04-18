@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 1. Reusable Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 2. Entity Validations
+    function isValidUser(data) {
+      return data.uid == request.auth.uid
+        && data.email is string && data.email.size() <= 256
+        && (data.displayName == null || (data.displayName is string && data.displayName.size() <= 100))
+        && (data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 1000))
+        && data.keys().hasAll(['uid', 'email'])
+        && data.keys().size() <= 5;
+    }
+
+    function isValidPlaylist(data) {
+      return data.ownerId == request.auth.uid
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && (data.description == null || (data.description is string && data.description.size() <= 500))
+        && data.songs is list && data.songs.size() <= 1000
+        && data.keys().hasAll(['name', 'ownerId', 'songs'])
+        && data.keys().size() <= 7;
+    }
+
+    // 3. Collection Match Blocks
+    
+    // User Profiles
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow create: if isOwner(userId) && isValidUser(incoming()) && incoming().createdAt == request.time;
+      allow update: if isOwner(userId) && isValidUser(incoming())
+                    && incoming().uid == existing().uid
+                    && incoming().email == existing().email
+                    && incoming().createdAt == existing().createdAt
+                    && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL']);
+    }
+
+    // Playlists
+    match /playlists/{playlistId} {
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      
+      allow create: if isVerified() && isValidId(playlistId) && isValidPlaylist(incoming()) 
+                    && incoming().ownerId == request.auth.uid
+                    && incoming().createdAt == request.time;
+                    
+      allow update: if isOwner(existing().ownerId) && isValidPlaylist(incoming())
+                    && incoming().ownerId == existing().ownerId
+                    && incoming().createdAt == existing().createdAt
+                    && (
+                      // Action: Rename or update description
+                      incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'updatedAt']) ||
+                      // Action: Update songs list
+                      incoming().diff(existing()).affectedKeys().hasOnly(['songs', 'updatedAt'])
+                    )
+                    && incoming().updatedAt == request.time;
+
+      allow delete: if isOwner(existing().ownerId);
+    }
+  }
+}
